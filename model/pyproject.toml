@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "repo"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+
+[tool.poetry.dependencies]
+python = "^3.10"
+numpy = "<2.0.0"
+pandas = "^2.2.2"
+gitpython = "^3.1.43"
+matplotlib = "^3.9.1"
+opencv-python = "^4.10.0.84"
+pillow = "^10.4.0"
+psutil = "^6.0.0"
+pyyaml = "^6.0.1"
+requests = "^2.32.3"
+scipy = "^1.14.0"
+thop = "^0.1.1.post2209072238"
+tqdm = "^4.66.4"
+seaborn = "^0.13.2"
+ultralytics = "^8.2.49"
+ipykernel = "^6.29.5"
+torch = {version = "1.13.1+cu116", source = "torch_cu116"}
+torchvision = {version = "0.14.1+cu116", source = "torch_cu116"}
+torchaudio = {version = "0.13.1", source = "torch_cu116"}
+
+
+[[tool.poetry.source]]
+name = "torch_cu116"
+url = "https://download.pytorch.org/whl/cu116"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
