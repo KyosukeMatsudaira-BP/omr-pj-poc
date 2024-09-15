@@ -103,3 +103,9 @@ RUN sudo apt-get autoremove -y \
 
 
 WORKDIR /workspace/repo
+
+# poetryで依存関係をインストールするためにpyproject.tomlとpoetry.lockをコピー
+COPY pyproject.toml poetry.lock* /workspace/repo/
+
+# Poetryで依存関係をインストール
+RUN poetry install --no-root
