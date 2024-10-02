@@ -1,0 +1,59 @@
+[tool.poetry]
+name = "data"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+
+[tool.poetry.dependencies]
+python = "~3.10"
+opencv-python = "^4.10.0.84"
+notebook = "^7.2.1"
+jupyter = "^1.0.0"
+pillow = "^10.4.0"
+tqdm = "^4.66.5"
+matplotlib = "^3.9.2"
+scipy = "^1.14.1"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.3.1"
+pytest-mock = "^3.11.1"
+pytest-cov = "^4.1.0"
+types-pyyaml = "^6.0.12.11"
+ruff = "^0.1.10"
+black = "~23.10.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+target-version = ['py310']
+include = '\.pyi?$'
+line-length = 88
+preview = true
+
+[tool.ruff]
+select = [
+    # cf. https://beta.ruff.rs/docs/rules/
+    "E",  # pycodestyle error
+    "W",  # pycodestyle warning
+    "F",  # Pyflakes
+    "I",  # isort
+]
+fixable = ["I"]
+unfixable = ["E", "W", "F"]
+src = ["data/scripts"]
+line-length = 88
+
+
+[tool.pytest]
+minversion = "6.0"
+addopts = "-ra -q -vv --capture=no --cache-clear"
+testpaths = ["tests/*"]
+
+
+[tool.pytest.ini_options]
+markers = [
+    "only_local: ローカルでのみ実行するテストです。--only_localオプションで実行するとその他のテストも含むすべてのテストを実行します",
+]
