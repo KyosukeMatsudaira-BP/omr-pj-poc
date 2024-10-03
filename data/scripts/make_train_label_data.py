@@ -3,6 +3,8 @@ import json
 from tqdm import tqdm
 import re
 import csv
+import concurrent.futures
+from functools import partial
 
 def extract_rel_position(text):
     # 正規表現で rel_position の値を抽出、負の数にも対応
@@ -10,6 +12,59 @@ def extract_rel_position(text):
     if match:
         return match.group(1)
     return None
+
+
+def task_for_each_label_json(
+    label_filepath: str,
+    labels_to_use: dict,
+    label_results_dir: Path,
+    barline_annotation_grouped_by_img_id: dict,
+):
+    # ラベルデータの読み込み
+    with open(label_filepath) as file:
+        label_json = json.load(file)
+
+    # アノテーションを取得
+    annotations = label_json["annotations"]
+
+    annotations_grouped_by_img_id = {}
+    # 前処理：画像idをキーとする辞書を作成
+    for k, v in annotations.items():
+        img_id = v["img_id"]
+        if img_id not in annotations_grouped_by_img_id:
+            annotations_grouped_by_img_id[img_id] = []
+        annotations_grouped_by_img_id[img_id].append(v)
+    
+    # 各画像idごとにアノテーションデータをファイルに保存
+    for img_id, annotation_list in tqdm(annotations_grouped_by_img_id.items()):
+        filename = f"{img_id}.txt"
+        savefilepath = label_results_dir / filename
+        with open(savefilepath, 'w') as f:
+            writer = csv.writer(f)
+            for item in annotation_list:
+                data = []
+                cat_id_first = int(item["cat_id"][0])
+                if cat_id_first in labels_to_use: # 使うラベル情報だけを書き込む 
+                    a_bbox = item["a_bbox"]
+                    comments = item["comments"]
+                    rel_position = "_"
+                    if "rel_position" in comments:
+                        rel_position = extract_rel_position(comments)
+                    data.append(cat_id_first)
+                    data.append(rel_position)
+                    data.extend(a_bbox)
+                    # 書き込み
+                    writer.writerow(data)
+            # 小節線のデータを書き込み
+            barline_list = barline_annotation_grouped_by_img_id.get(int(img_id), [])
+            for item in barline_list:
+                data = []
+                label_id = 209
+                rel_position = "_"
+                data.append(label_id)
+                data.append(rel_position)
+                data.extend(item)
+                writer.writerow(data)
 
 
 if __name__=="__main__":
@@ -63,8 +118,8 @@ if __name__=="__main__":
     }
 
     # 小節線のアノテーションデータを読み込み
-    barline_results_dir = results_dir / "barline_annotation"
-    barline_annotation_filepath = barline_results_dir / "barline_annotation.txt"
+    barline_results_dir = results_dir / "barline_annotation" / data_version
+    barline_annotation_filepath = barline_results_dir /"barline_annotation.txt"
     barline_annotation = []
     with open(barline_annotation_filepath) as file:
         reader = csv.reader(file)
@@ -78,55 +133,16 @@ if __name__=="__main__":
             barline_annotation_grouped_by_img_id[img_id] = []
         barline_annotation_grouped_by_img_id[img_id].append(v)
 
-    # 元データのラベルを読み込み
-    ## ラベルファイルが多いので逐次読み込んでいく
+    # jsonごとに並列実行してデータを作成する
+    partial_task = partial( # partialを使って共通の引数を固定する
+        task_for_each_label_json,
+        labels_to_use=labels_to_use,
+        label_results_dir=label_results_dir,
+        barline_annotation_grouped_by_img_id=barline_annotation_grouped_by_img_id
+    )
     label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
-    for label_filepath in tqdm(label_filepaths):
-        # ラベルデータの読み込み
-        with open(label_filepath) as file:
-            label_json = json.load(file)
-
-        # アノテーションを取得
-        annotations = label_json["annotations"]
-
-        annotations_grouped_by_img_id = {}
-        # 前処理：画像idをキーとする辞書を作成
-        for k, v in annotations.items():
-            img_id = v["img_id"]
-            if img_id not in annotations_grouped_by_img_id:
-                annotations_grouped_by_img_id[img_id] = []
-            annotations_grouped_by_img_id[img_id].append(v)
-        
-        # 各画像idごとにアノテーションデータをファイルに保存
-        for img_id, annotation_list in tqdm(annotations_grouped_by_img_id.items()):
-            filename = f"{img_id}.txt"
-            savefilepath = label_results_dir / filename
-            with open(savefilepath, 'w') as f:
-                writer = csv.writer(f)
-                for item in annotation_list:
-                    data = []
-                    cat_id_first = int(item["cat_id"][0])
-                    if cat_id_first in labels_to_use: # 使うラベル情報だけを書き込む 
-                        a_bbox = item["a_bbox"]
-                        comments = item["comments"]
-                        rel_position = "_"
-                        if "rel_position" in comments:
-                            rel_position = extract_rel_position(comments)
-                        data.append(cat_id_first)
-                        data.append(rel_position)
-                        data.extend(a_bbox)
-                        # 書き込み
-                        writer.writerow(data)
-                # 小節線のデータを書き込み
-                barline_list = barline_annotation_grouped_by_img_id.get(int(img_id), [])
-                for item in barline_list:
-                    data = []
-                    label_id = 209
-                    rel_position = "_"
-                    data.append(label_id)
-                    data.append(rel_position)
-                    data.extend(item)
-                    writer.writerow(data)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(partial_task, label_filepaths)
 
 
 

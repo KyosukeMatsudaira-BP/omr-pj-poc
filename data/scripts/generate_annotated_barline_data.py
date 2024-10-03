@@ -7,6 +7,8 @@ import json
 from tqdm import tqdm
 import cv2
 import csv
+import concurrent.futures
+from functools import partial
 
 
 def get_files_with_extension(directory: Path, extension: str) -> list[str]:
@@ -134,6 +136,60 @@ def draw_bounding_boxes(image, bounding_boxes):
     return image_
 
 
+
+def task_for_each_label_json(
+    label_filepath: str,
+    writer
+):
+    # ラベルデータの読み込み
+    with open(label_filepath) as file:
+        label_json = json.load(file)
+    images_data = label_json["images"]
+
+    results = []
+    # for img_path in tqdm(images_paths):
+    for v in tqdm(images_data):
+        img_filename = v["filename"]
+        img_id = v["id"]
+        img_path = seg_dir / img_filename.replace(".png", "_seg.png")
+        # 画像の読み込み
+        img = Image.open(img_path).convert('RGB')
+        img_np = np.array(img)
+        
+        # 小節線部分のピクセルの座標を取得する
+        target_color_hex = "#00acc6" # 小節線の色
+        barline_pixcel_coordinates = find_color_pixels(img_np, target_color_hex)
+
+        # 距離に基づいて座標をグループ化
+        grouped_coordinates = group_coordinates_by_distance(barline_pixcel_coordinates, threshold_distance=10)
+
+        # グループ化された座標からバウンディングボックスを計算
+        bounding_boxes = calculate_bounding_boxes_from_groups(grouped_coordinates)
+        
+        # 画像idを取得する
+        try:
+            img_filename = str(img_path.name).replace("_seg", "") # _segの文字列をファイル名から削除
+            # img_id = get_img_id(images_data, img_filename)
+        except Exception as e:
+            print(e)
+            img_id = "None"
+            img_filename = img_path.name
+
+        # 結果を追加
+        for b_box in bounding_boxes:
+            res = [img_id] + b_box
+            writer.writerow(res)
+
+        # 画像の保存
+        # img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY) # 白黒に一旦してから
+        # img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB) # RGBに変換することで三次元配列を維持
+        # img_with_bbox = draw_bounding_boxes(img_np, bounding_boxes) # bboxを描画
+        # img_result_filepath = save_img_dir / img_filename
+        # cv2.imwrite(img_result_filepath, img_with_bbox)
+
+    
+
+
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
@@ -152,54 +208,17 @@ if __name__=="__main__":
 
     # 元データのラベルのファイルパス
     label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
-
     barline_annotation_filepath = barline_annotation_results_dir / "barline_annotation.txt"
+
+    # jsonごとに並列実行してデータを作成する
+    label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
     with open(barline_annotation_filepath, 'w') as f:
         writer = csv.writer(f)
-        for label_filepath in tqdm(label_filepaths):
-            # ラベルデータの読み込み
-            with open(label_filepath) as file:
-                label_json = json.load(file)
-            images_data = label_json["images"]
 
-            results = []
-            # for img_path in tqdm(images_paths):
-            for v in tqdm(images_data):
-                img_filename = v["filename"]
-                img_id = v["id"]
-                img_path = seg_dir / img_filename.replace(".png", "_seg.png")
-                # 画像の読み込み
-                img = Image.open(img_path).convert('RGB')
-                img_np = np.array(img)
-                
-                # 小節線部分のピクセルの座標を取得する
-                target_color_hex = "#00acc6" # 小節線の色
-                barline_pixcel_coordinates = find_color_pixels(img_np, target_color_hex)
-
-                # 距離に基づいて座標をグループ化
-                grouped_coordinates = group_coordinates_by_distance(barline_pixcel_coordinates, threshold_distance=10)
-
-                # グループ化された座標からバウンディングボックスを計算
-                bounding_boxes = calculate_bounding_boxes_from_groups(grouped_coordinates)
-                
-                # 画像idを取得する
-                try:
-                    img_filename = str(img_path.name).replace("_seg", "") # _segの文字列をファイル名から削除
-                    # img_id = get_img_id(images_data, img_filename)
-                except Exception as e:
-                    print(e)
-                    img_id = "None"
-                    img_filename = img_path.name
-
-                # 結果を追加
-                for b_box in bounding_boxes:
-                    res = [img_id] + b_box
-                    writer.writerow(res)
-
-                # 画像の保存
-                # img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY) # 白黒に一旦してから
-                # img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB) # RGBに変換することで三次元配列を維持
-                # img_with_bbox = draw_bounding_boxes(img_np, bounding_boxes) # bboxを描画
-                # img_result_filepath = save_img_dir / img_filename
-                # cv2.imwrite(img_result_filepath, img_with_bbox)
-
+        partial_task = partial( # partialを使って共通の引数を固定する
+        task_for_each_label_json,
+        writer=writer
+        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            executor.map(partial_task, label_filepaths)
+        
