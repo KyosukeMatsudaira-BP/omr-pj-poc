@@ -67,7 +67,7 @@ if __name__=="__main__":
     barline_annotation_filepath = barline_results_dir / "barline_annotation.txt"
     barline_annotation = []
     with open(barline_annotation_filepath) as file:
-        reader = csv.reader(file, delimiter=' ')
+        reader = csv.reader(file)
         for row in reader:
             barline_annotation.append([int(item) for item in row if item])
     barline_annotation_grouped_by_img_id = {}
