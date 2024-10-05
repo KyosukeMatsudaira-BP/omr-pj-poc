@@ -139,18 +139,18 @@ def draw_bounding_boxes(image, bounding_boxes):
 
 def task_for_each_label_json(
     label_filepath: str,
-    writer
+    save_results_dir: Path,
 ):
     # ラベルデータの読み込み
     with open(label_filepath) as file:
         label_json = json.load(file)
     images_data = label_json["images"]
 
-    results = []
     for v in tqdm(images_data):
         img_filename = v["filename"]
         img_id = v["id"]
         img_path = seg_dir / img_filename.replace(".png", "_seg.png")
+
         # 画像の読み込み
         img = Image.open(img_path).convert('RGB')
         img_np = np.array(img)
@@ -174,10 +174,13 @@ def task_for_each_label_json(
             img_id = "None"
             img_filename = img_path.name
 
-        # 結果を追加
-        for b_box in bounding_boxes:
-            res = [img_id] + b_box
-            writer.writerow(res)
+        # 結果を保存
+        save_result_filepath = save_results_dir / f"{img_id}.txt"
+        with open(save_result_filepath, mode="w") as f:
+            writer = csv.writer(f)
+            for b_box in bounding_boxes:
+                res = [img_id] + b_box
+                writer.writerow(res)
 
         # 画像の保存
         # img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY) # 白黒に一旦してから
@@ -192,30 +195,29 @@ def task_for_each_label_json(
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
-    data_version = "ds2_complete" # フル版ならds2_complete
+    data_version = "ds2_dense" # フル版ならds2_complete
     data_dir = base_dir / "data" / data_version
     results_dir = base_dir / "results"
     seg_dir = data_dir/ "segmentation"
     barline_annotation_results_dir = results_dir / "barline_annotation" / data_version
     save_img_dir = barline_annotation_results_dir / "images"
+    save_results_dir = barline_annotation_results_dir / "results"
     results_dir.mkdir(exist_ok=True)
     barline_annotation_results_dir.mkdir(exist_ok=True, parents=True)
     save_img_dir.mkdir(exist_ok=True)
+    save_results_dir.mkdir(exist_ok=True)
 
     # 元画像のパスを取得
     images_paths = get_files_with_extension(seg_dir, ".png")
 
     # 元データのラベルのファイルパス
     label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
-    barline_annotation_filepath = barline_annotation_results_dir / "barline_annotation.txt"
+    print(label_filepaths)
 
     # jsonごとに並列実行してデータを作成する
-    with open(barline_annotation_filepath, 'w') as f:
-        writer = csv.writer(f)
-
-        partial_task = partial( # partialを使って共通の引数を固定する
+    partial_task = partial( # partialを使って共通の引数を固定する
         task_for_each_label_json,
-        writer=writer
-        )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
-            executor.map(partial_task, label_filepaths)
+        save_results_dir=save_results_dir
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
+        executor.map(partial_task, label_filepaths)

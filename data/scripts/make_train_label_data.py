@@ -18,7 +18,7 @@ def task_for_each_label_json(
     label_filepath: str,
     labels_to_use: dict,
     label_results_dir: Path,
-    barline_annotation_grouped_by_img_id: dict,
+    barline_results_dir: Path,
 ):
     # ラベルデータの読み込み
     with open(label_filepath) as file:
@@ -39,7 +39,8 @@ def task_for_each_label_json(
     for img_id, annotation_list in tqdm(annotations_grouped_by_img_id.items()):
         filename = f"{img_id}.txt"
         savefilepath = label_results_dir / filename
-        with open(savefilepath, 'w') as f:
+
+        with open(savefilepath, mode='w') as f:
             writer = csv.writer(f)
             for item in annotation_list:
                 data = []
@@ -56,24 +57,30 @@ def task_for_each_label_json(
                     # 書き込み
                     writer.writerow(data)
             # 小節線のデータを書き込み
-            barline_list = barline_annotation_grouped_by_img_id.get(int(img_id), [])
-            for item in barline_list:
-                data = []
+            # 小節線のアノテーションデータを読み込み
+            barline_result_filepath = barline_results_dir / f"{img_id}.txt"
+            with open(barline_result_filepath, mode="r") as f:
+                reader = csv.reader(f)
                 label_id = 209
                 rel_position = "_"
-                data.append(label_id)
-                data.append(rel_position)
-                data.extend(item)
-                writer.writerow(data)
+                for item in reader:
+                    img_id = item[0]
+                    v = item[1:]
+                    data = []
+                    data.append(label_id)
+                    data.append(rel_position)
+                    data.extend(v)
+                    writer.writerow(data)
 
 
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
-    data_version = "ds2_complete" # フル版ならds2_complete
+    data_version = "ds2_dense" # フル版ならds2_complete
     data_dir = base_dir / "data" / data_version
     results_dir = base_dir / "results"
     label_results_dir = results_dir / "label" / data_version
+    barline_results_dir = results_dir / "barline_annotation" / data_version / "results"
     label_results_dir.mkdir(exist_ok=True, parents=True)
 
     # 使用するラベルのリスト
@@ -117,29 +124,12 @@ if __name__=="__main__":
         209: "barLine", # 208までdeepscoreにラベルが存在するため209に設定
     }
 
-    # 小節線のアノテーションデータを読み込み
-    barline_results_dir = results_dir / "barline_annotation" / data_version
-    barline_annotation_filepath = barline_results_dir /"barline_annotation.csv"
-    print(f"Reading file: {barline_annotation_filepath}")
-    barline_annotation = []
-    with open(barline_annotation_filepath, encoding='utf-8') as file:
-        reader = csv.reader(file)
-        for row in reader:
-            barline_annotation.append([int(item) for item in row if item])
-    barline_annotation_grouped_by_img_id = {}
-    for item in barline_annotation:
-        img_id = item[0]
-        v = item[1:]
-        if img_id not in barline_annotation_grouped_by_img_id:
-            barline_annotation_grouped_by_img_id[img_id] = []
-        barline_annotation_grouped_by_img_id[img_id].append(v)
-
     # jsonごとに並列実行してデータを作成する
     partial_task = partial( # partialを使って共通の引数を固定する
         task_for_each_label_json,
         labels_to_use=labels_to_use,
         label_results_dir=label_results_dir,
-        barline_annotation_grouped_by_img_id=barline_annotation_grouped_by_img_id
+        barline_results_dir=barline_results_dir
     )
     label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
     with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
