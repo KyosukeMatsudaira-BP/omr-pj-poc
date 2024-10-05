@@ -70,11 +70,11 @@ def task_for_each_label_json(
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
-    data_version = "ds2_dense" # フル版ならds2_complete
+    data_version = "ds2_complete" # フル版ならds2_complete
     data_dir = base_dir / "data" / data_version
     results_dir = base_dir / "results"
     label_results_dir = results_dir / "label" / data_version
-    label_results_dir.mkdir(exist_ok=True)
+    label_results_dir.mkdir(exist_ok=True, parents=True)
 
     # 使用するラベルのリスト
     labels_to_use = {
@@ -119,9 +119,10 @@ if __name__=="__main__":
 
     # 小節線のアノテーションデータを読み込み
     barline_results_dir = results_dir / "barline_annotation" / data_version
-    barline_annotation_filepath = barline_results_dir /"barline_annotation.txt"
+    barline_annotation_filepath = barline_results_dir /"barline_annotation.csv"
+    print(f"Reading file: {barline_annotation_filepath}")
     barline_annotation = []
-    with open(barline_annotation_filepath) as file:
+    with open(barline_annotation_filepath, encoding='utf-8') as file:
         reader = csv.reader(file)
         for row in reader:
             barline_annotation.append([int(item) for item in row if item])
@@ -141,7 +142,7 @@ if __name__=="__main__":
         barline_annotation_grouped_by_img_id=barline_annotation_grouped_by_img_id
     )
     label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
         executor.map(partial_task, label_filepaths)
 
 

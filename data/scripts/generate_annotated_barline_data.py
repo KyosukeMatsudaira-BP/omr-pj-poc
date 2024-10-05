@@ -147,7 +147,6 @@ def task_for_each_label_json(
     images_data = label_json["images"]
 
     results = []
-    # for img_path in tqdm(images_paths):
     for v in tqdm(images_data):
         img_filename = v["filename"]
         img_id = v["id"]
@@ -187,13 +186,13 @@ def task_for_each_label_json(
         # img_result_filepath = save_img_dir / img_filename
         # cv2.imwrite(img_result_filepath, img_with_bbox)
 
-    
+
 
 
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
-    data_version = "ds2_dense" # フル版ならds2_complete
+    data_version = "ds2_complete" # フル版ならds2_complete
     data_dir = base_dir / "data" / data_version
     results_dir = base_dir / "results"
     seg_dir = data_dir/ "segmentation"
@@ -211,7 +210,6 @@ if __name__=="__main__":
     barline_annotation_filepath = barline_annotation_results_dir / "barline_annotation.txt"
 
     # jsonごとに並列実行してデータを作成する
-    label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
     with open(barline_annotation_filepath, 'w') as f:
         writer = csv.writer(f)
 
@@ -219,6 +217,5 @@ if __name__=="__main__":
         task_for_each_label_json,
         writer=writer
         )
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
             executor.map(partial_task, label_filepaths)
-        
