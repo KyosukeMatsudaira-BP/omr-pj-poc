@@ -9,6 +9,10 @@ import cv2
 import csv
 import concurrent.futures
 from functools import partial
+import logging
+
+# ログの設定
+logging.basicConfig(level=logging.INFO)
 
 
 def get_files_with_extension(directory: Path, extension: str) -> list[str]:
@@ -146,7 +150,7 @@ def task_for_each_label_json(
         label_json = json.load(file)
     images_data = label_json["images"]
 
-    for v in tqdm(images_data):
+    for v in images_data:
         img_filename = v["filename"]
         img_id = v["id"]
         img_path = seg_dir / img_filename.replace(".png", "_seg.png")
@@ -189,13 +193,15 @@ def task_for_each_label_json(
         # img_result_filepath = save_img_dir / img_filename
         # cv2.imwrite(img_result_filepath, img_with_bbox)
 
+    return f"{Path(label_filepath).name} has completed."
+
 
 
 
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
-    data_version = "ds2_dense" # フル版ならds2_complete
+    data_version = "ds2_complete" # フル版ならds2_complete
     data_dir = base_dir / "data" / data_version
     results_dir = base_dir / "results"
     seg_dir = data_dir/ "segmentation"
@@ -220,4 +226,10 @@ if __name__=="__main__":
         save_results_dir=save_results_dir
     )
     with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
-        executor.map(partial_task, label_filepaths)
+        # 各タスクをサブミットしてfutureオブジェクトを生成
+        futures = [executor.submit(partial_task, label_filepath) for label_filepath in label_filepaths]
+        
+        # タスクが完了するたびにログを出力
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            logging.info(result)

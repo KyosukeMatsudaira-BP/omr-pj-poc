@@ -5,6 +5,10 @@ import re
 import csv
 import concurrent.futures
 from functools import partial
+import logging
+
+# ログの設定
+logging.basicConfig(level=logging.INFO)
 
 def extract_rel_position(text):
     # 正規表現で rel_position の値を抽出、負の数にも対応
@@ -36,7 +40,7 @@ def task_for_each_label_json(
         annotations_grouped_by_img_id[img_id].append(v)
     
     # 各画像idごとにアノテーションデータをファイルに保存
-    for img_id, annotation_list in tqdm(annotations_grouped_by_img_id.items()):
+    for img_id, annotation_list in annotations_grouped_by_img_id.items():
         filename = f"{img_id}.txt"
         savefilepath = label_results_dir / filename
 
@@ -71,12 +75,13 @@ def task_for_each_label_json(
                     data.append(rel_position)
                     data.extend(v)
                     writer.writerow(data)
+    return f"{Path(label_filepath).name} has completed."
 
 
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
-    data_version = "ds2_dense" # フル版ならds2_complete
+    data_version = "ds2_complete" # フル版ならds2_complete
     data_dir = base_dir / "data" / data_version
     results_dir = base_dir / "results"
     label_results_dir = results_dir / "label" / data_version
@@ -132,8 +137,15 @@ if __name__=="__main__":
         barline_results_dir=barline_results_dir
     )
     label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
+    print(label_filepaths)
     with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
-        executor.map(partial_task, label_filepaths)
+        # 各タスクをサブミットしてfutureオブジェクトを生成
+        futures = [executor.submit(partial_task, label_filepath) for label_filepath in label_filepaths]
+        
+        # タスクが完了するたびにログを出力
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            logging.info(result)
 
 
 
