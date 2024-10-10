@@ -25,7 +25,7 @@ jobs:
 
       - name: 依存関係をインストール
         working-directory: data/
-        run: poetry install
+        run: poetry install --no-root
 
       - name: 単体テストを実行
         working-directory: data/tests
