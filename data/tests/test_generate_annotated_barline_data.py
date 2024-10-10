@@ -1,5 +1,5 @@
 import pytest
-from scripts.generate_annotated_barline_data import hex_to_rgb
+from data.scripts.generate_annotated_barline_data import hex_to_rgb
 
 @pytest.mark.parametrize(
     "hex_color, expected",
