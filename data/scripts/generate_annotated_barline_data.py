@@ -1,6 +1,5 @@
 from pathlib import Path
 import numpy as np
-from scipy.spatial.distance import euclidean
 from scipy.spatial import KDTree
 from PIL import Image
 import json
