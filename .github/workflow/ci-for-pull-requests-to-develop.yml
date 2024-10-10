@@ -1,0 +1,32 @@
+name: CI for Pull Requests to Develop
+
+on:
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: コードをチェックアウト
+        uses: actions/checkout@v3
+
+      - name: Pythonをセットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10.11'
+
+      - name: Poetryをインストール
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "${HOME}/.local/bin" >> $GITHUB_PATH
+
+      - name: 依存関係をインストール
+        working-directory: data/
+        run: poetry install
+
+      - name: 単体テストを実行
+        working-directory: data/tests
+        run: poetry run pytest 
