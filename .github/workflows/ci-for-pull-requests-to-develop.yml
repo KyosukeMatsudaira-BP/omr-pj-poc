@@ -5,6 +5,7 @@ on:
     branches:
       - develop
 
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -29,4 +30,4 @@ jobs:
 
       - name: 単体テストを実行
         working-directory: data/tests
-        run: poetry run pytest 
+        run: poetry run pytest -vv
