@@ -150,5 +150,6 @@ class CustomLoss:
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             anch.append(anchors[a])  # anchors
             tcls.append(c)  # class
+            print("b",b)
 
         return tcls, tbox, indices, anch
