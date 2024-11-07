@@ -1,23 +1,107 @@
 from yolov3.models.yolo import BaseModel
-import os
 import sys
 from copy import deepcopy
 from pathlib import Path
+import torch
+import torch.nn as nn
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 
-from models.common import *  # noqa
-from models.experimental import *  # noqa
-from utils.autoanchor import check_anchor_order
-from utils.general import LOGGER, check_yaml, make_divisible
-from utils.torch_utils import (
+from yolov3.models.common import *  # noqa
+from yolov3.models.experimental import *  # noqa
+from yolov3.utils.autoanchor import check_anchor_order
+from yolov3.utils.general import LOGGER, check_yaml, make_divisible
+from yolov3.utils.torch_utils import (
     initialize_weights,
     scale_img,
 )
 
+class Detect(nn.Module):
+    """YOLOv3 Detect head for processing detection model outputs, including grid and anchor grid generation."""
+
+    stride = None  # strides computed during build
+    dynamic = False  # force grid reconstruction
+    export = False  # export mode
+
+    def __init__(self, nc=80, np=136, anchors=(), ch=(), inplace=True):  # detection layer
+        """Initializes YOLOv3 detection layer with class count, anchors, channels, and operation modes."""
+        super().__init__()
+        self.nc = nc  # number of classes
+        self.np = np  # number of pitches
+        self.no = nc + np + 5  # number of outputs per anchor (classes + pitches + [x,y,w,h,obj])
+        self.nl = len(anchors)  # number of detection layers
+        self.na = len(anchors[0]) // 2  # number of anchors
+        self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid
+        self.anchor_grid = [torch.empty(0) for _ in range(self.nl)]  # init anchor grid
+        self.register_buffer("anchors", torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
+        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
+        self.inplace = inplace  # use inplace ops (e.g. slice assignment)
+
+    def forward(self, x):
+        """
+        Processes input through convolutional layers, reshaping output for detection.
+
+        Expects x as list of tensors with shape(bs, C, H, W).
+        """
+        z = []  # inference output
+        for i in range(self.nl):
+            x[i] = self.m[i](x[i])  # conv
+            bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
+            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+
+            if not self.training:  # inference
+                if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
+                    self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
+
+                # Split predictions into components
+                xy, wh, conf_cls_pitch = x[i].sigmoid().split((2, 2, self.nc + self.np + 1), 4)
+                xy = (xy * 2 + self.grid[i]) * self.stride[i]  # xy
+                wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
+                y = torch.cat((xy, wh, conf_cls_pitch), 4)  # Combine predictions
+                z.append(y.view(bs, self.na * nx * ny, self.no))
+
+        return x if self.training else (torch.cat(z, 1),) if self.export else (torch.cat(z, 1), x)
+
+    def _make_grid(self, nx=20, ny=20, i=0, torch_1_10=check_version(torch.__version__, "1.10.0")):
+        """Generates a grid and corresponding anchor grid with shape `(1, num_anchors, ny, nx, 2)` for indexing
+        anchors.
+        """
+        d = self.anchors[i].device
+        t = self.anchors[i].dtype
+        shape = 1, self.na, ny, nx, 2  # grid shape
+        y, x = torch.arange(ny, device=d, dtype=t), torch.arange(nx, device=d, dtype=t)
+        yv, xv = torch.meshgrid(y, x, indexing="ij") if torch_1_10 else torch.meshgrid(y, x)  # torch>=0.7 compatibility
+        grid = torch.stack((xv, yv), 2).expand(shape) - 0.5  # add grid offset, i.e. y = 2.0 * x - 0.5
+        anchor_grid = (self.anchors[i] * self.stride[i]).view((1, self.na, 1, 1, 2)).expand(shape)
+        return grid, anchor_grid
+
+
+class Segment(Detect):
+    """YOLOv3 Segment head for segmentation models, adding mask prediction and prototyping to detection."""
+
+    def __init__(self, nc=80, anchors=(), nm=32, npr=256, ch=(), inplace=True):
+        """Initializes the YOLOv3 segment head with customizable class count, anchors, masks, protos, channels, and
+        inplace option.
+        """
+        super().__init__(nc, anchors, ch, inplace)
+        self.nm = nm  # number of masks
+        self.npr = npr  # number of protos
+        self.no = 5 + nc + self.nm  # number of outputs per anchor
+        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
+        self.proto = Proto(ch[0], self.npr, self.nm)  # protos
+        self.detect = Detect.forward
+
+    def forward(self, x):
+        """Executes forward pass, returning predictions and protos, with different outputs based on training and export
+        states.
+        """
+        p = self.proto(x[0])
+        x = self.detect(self, x)
+        return (x, p) if self.training else (x[0], p) if self.export else (x[0], p, x[1])
+    
 class OMRModel(BaseModel):
     def __init__(self, cfg="yolov5s.yaml", ch=3, nc=None, np=None, anchors=None):  # model, input channels, number of classes, number of pitches
         """Initializes YOLOv3 detection model with configurable YAML, input channels, classes, pitches, and anchors."""
@@ -116,12 +200,93 @@ class OMRModel(BaseModel):
         return y
 
     def _initialize_biases(self, cf=None):  # initialize biases into Detect(), cf is class frequency
-        """Initializes biases for objectness and classes in Detect() module; optionally uses class frequency `cf`."""
+        """Initialize biases for detection, classification and pitch prediction."""
         m = self.model[-1]  # Detect() module
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
-            b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
-            b.data[:, 5 : 5 + m.nc] += (
+            # obj (8 objects per 640 image)
+            b.data[:, 4] += math.log(8 / (640 / s) ** 2)
+            # cls (class predictions)
+            b.data[:, 5:5 + m.nc] += (
                 math.log(0.6 / (m.nc - 0.99999)) if cf is None else torch.log(cf / cf.sum())
-            )  # cls
+            )
+            # pitch (pitch predictions)
+            if hasattr(m, 'np') and m.np > 0:
+                b.data[:, 5 + m.nc:5 + m.nc + m.np] += math.log(0.6 / (m.np - 0.99999))
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+def parse_model(d, ch):  # model_dict, input_channels(3)
+    """Parses a YOLOv3 model configuration from a dictionary and constructs the model."""
+    LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
+    anchors, nc, np, gd, gw, act = d["anchors"], d["nc"], d["np"], d["depth_multiple"], d["width_multiple"], d.get("activation")
+    if act:
+        Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
+        LOGGER.info(f"{colorstr('activation:')} {act}")  # print
+    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
+    no = na * (nc + np + 5)  # number of outputs = anchors * (classes + pitches + 5)
+
+    layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
+    for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
+        m = eval(m) if isinstance(m, str) else m  # eval strings
+        for j, a in enumerate(args):
+            with contextlib.suppress(NameError):
+                args[j] = eval(a) if isinstance(a, str) else a  # eval strings
+
+        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
+        if m in {
+            Conv,
+            GhostConv,
+            Bottleneck,
+            GhostBottleneck,
+            SPP,
+            SPPF,
+            DWConv,
+            MixConv2d,
+            Focus,
+            CrossConv,
+            BottleneckCSP,
+            C3,
+            C3TR,
+            C3SPP,
+            C3Ghost,
+            nn.ConvTranspose2d,
+            DWConvTranspose2d,
+            C3x,
+        }:
+            c1, c2 = ch[f], args[0]
+            if c2 != no:  # if not output
+                c2 = make_divisible(c2 * gw, 8)
+
+            args = [c1, c2, *args[1:]]
+            if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
+                args.insert(2, n)  # number of repeats
+                n = 1
+        elif m is nn.BatchNorm2d:
+            args = [ch[f]]
+        elif m is Concat:
+            c2 = sum(ch[x] for x in f)
+        # TODO: channel, gw, gd
+        elif m in {Detect, Segment}:
+            args.append([ch[x] for x in f])
+            if isinstance(args[2], int):  # number of anchors
+                args[2] = [list(range(args[2] * 2))] * len(f)
+            if m is Segment:
+                args[4] = make_divisible(args[4] * gw, 8)
+        elif m is Contract:
+            c2 = ch[f] * args[0] ** 2
+        elif m is Expand:
+            c2 = ch[f] // args[0] ** 2
+        else:
+            c2 = ch[f]
+
+        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+        t = str(m)[8:-2].replace("__main__.", "")  # module type
+        np = sum(x.numel() for x in m_.parameters())  # number params
+        m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
+        LOGGER.info(f"{i:>3}{str(f):>18}{n_:>3}{np:10.0f}  {t:<40}{str(args):<30}")  # print
+        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
+        layers.append(m_)
+        if i == 0:
+            ch = []
+        ch.append(c2)
+    return nn.Sequential(*layers), sorted(save)

@@ -12,11 +12,11 @@
 
 1. cocoデータセットの取得
 
-    yolov3/data/scripts/get_coco123.shを以下のように変更
+    yolov3/data/scripts/get_coco128.shを以下のように変更
     ```
     d='../datasets' -> d='./data'
     ```
     以下を実行
     ```
-    bash yolov3/data/scripts/get_coco123.sh
+    bash yolov3/data/scripts/get_coco128.sh
     ```
