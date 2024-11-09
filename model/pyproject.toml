@@ -5,6 +5,9 @@ description = ""
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 
+packages = [
+    { include = "yolov3" }
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"

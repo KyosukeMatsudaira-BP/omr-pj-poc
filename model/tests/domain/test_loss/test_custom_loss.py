@@ -1,12 +1,14 @@
 import pytest
+import yaml
 import torch
 from src.domain.model import OMRModel
 from src.domain.dataloader import CustomDataset, custom_collate_fn
+from src.domain.loss import CustomLoss
 from torch.utils.data import DataLoader
 from tests.utils import get_test_data_path
 
 @pytest.fixture()
-def test_model_fixture():
+def fixture_model():
     config_path = 'models/config/omr_yolov5s.yaml' #'yolov3/models/yolov5s.yaml'
     model_path = 'models/pre_trained/yolov5s.pt'
     model = OMRModel(config_path)
@@ -20,13 +22,19 @@ def test_model_fixture():
                       if k in model_dict and not k.startswith('model.24')}  # model.24は最終層
     model_dict.update(pretrained_dict)
     model.load_state_dict(model_dict)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = 'cpu' # デバッグをする場合はgpuに渡すと中身が確認できないため
     model.to(device)
+
+    hyp_path = "data/hyps/hyp.scratch-low.yaml"
+    with open(hyp_path, errors="ignore") as f:
+        hyp = yaml.safe_load(f)
+
+    model.hyp = hyp
 
     return model, device
 
 @pytest.fixture()
-def test_data_fixture():
+def fixture_data():
     img_dir = get_test_data_path(__file__, "images")
     annotation_dir = get_test_data_path(__file__, "labels")
     train_dataset = CustomDataset(
@@ -35,20 +43,17 @@ def test_data_fixture():
     )
     return DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=custom_collate_fn)
 
-def test_omr_model(test_model_fixture, test_data_fixture):
-    """OMRModelのテスト
-    - モデルの出力のshapeが正しいか
-    """
-    model, device = test_model_fixture
-    data_loader = test_data_fixture
+
+def test_loss(fixture_model, fixture_data):
+
+    model, device = fixture_model
+    data_loader = fixture_data
+
+    criterion = CustomLoss(model)
 
     for images, targets in data_loader:
         images, targets = images.to(device), targets.to(device)
         outputs = model(images)
+        loss, _ = criterion(outputs, targets)
 
-        for i in range(len(outputs)):
-            assert outputs[i].shape[0] == 1
-            assert outputs[i].shape[1] == 3
-            assert outputs[i].shape[2] == 72/2**i
-            assert outputs[i].shape[3] == 72/2**i
-            assert outputs[i].shape[4] == 95
+        assert loss.shape[0] == 1

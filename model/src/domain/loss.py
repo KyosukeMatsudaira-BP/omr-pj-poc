@@ -1,8 +1,9 @@
+import torch
+import torch.nn as nn
 from yolov3.utils.metrics import bbox_iou
 from yolov3.utils.torch_utils import de_parallel
 from yolov3.utils.loss import FocalLoss
-import torch
-import torch.nn as nn
+
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
     # return positive, negative label smoothing BCE targets
@@ -34,15 +35,18 @@ class CustomLoss:
         self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, 1.0, h, autobalance
         self.na = m.na  # number of anchors
         self.nc = m.nc  # number of classes
+        self.npitch = m.npitch  # number of pitches
         self.nl = m.nl  # number of layers
         self.anchors = m.anchors
         self.device = device
+
 
     def __call__(self, p, targets):  # predictions, targets
         lcls = torch.zeros(1, device=self.device)  # class loss
         lbox = torch.zeros(1, device=self.device)  # box loss
         lobj = torch.zeros(1, device=self.device)  # object loss
-        tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
+        lpitch = torch.zeros(1, device=self.device)  # pitch loss
+        tcls, tpitch, tbox, indices, anchors = self.build_targets(p, targets)  # targets
 
         # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
@@ -51,8 +55,8 @@ class CustomLoss:
 
             n = b.shape[0]  # number of targets
             if n:
-                # pxy, pwh, _, pcls = pi[b, a, gj, gi].tensor_split((2, 4, 5), dim=1)  # faster, requires torch 1.8.0
-                pxy, pwh, _, pcls = pi[b, a, gj, gi].split((2, 2, 1, self.nc), 1)  # target-subset of predictions
+                # pxy, pwh, _, pcls, ppitch = pi[b, a, gj, gi].tensor_split((2, 4, 5, self.nc + 5), dim=1)  # faster, requires torch 1.8.0
+                pxy, pwh, _, pcls, ppitch = pi[b, a, gj, gi].split((2, 2, 1, self.nc, self.npitch), 1)  # target-subset of predictions
 
                 # Regression
                 pxy = pxy.sigmoid() * 2 - 0.5
@@ -76,6 +80,12 @@ class CustomLoss:
                     t[range(n), tcls[i]] = self.cp
                     lcls += self.BCEcls(pcls, t)  # BCE
 
+                # Pitch
+                if self.npitch > 1:  # pitch loss
+                    tp = torch.full_like(ppitch, self.cn, device=self.device)  # targets
+                    tp[range(n), tpitch[i]] = self.cp
+                    lpitch += self.BCEcls(ppitch, tp)  # BCE
+
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
                 #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
@@ -90,15 +100,15 @@ class CustomLoss:
         lbox *= self.hyp['box']
         lobj *= self.hyp['obj']
         lcls *= self.hyp['cls']
+        lpitch *= self.hyp['pitch']
         bs = tobj.shape[0]  # batch size
 
-        return (lbox + lobj + lcls) * bs, torch.cat((lbox, lobj, lcls)).detach()
-
+        return (lbox + lobj + lcls + lpitch) * bs, torch.cat((lbox, lobj, lcls, lpitch)).detach()
     def build_targets(self, p, targets):
-        # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
+        # Build targets for compute_loss(), input targets(image,class,pitch,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
-        tcls, tbox, indices, anch = [], [], [], []
-        gain = torch.ones(7, device=self.device)  # normalized to gridspace gain
+        tcls, tpitch, tbox, indices, anch = [], [], [], [], []
+        gain = torch.ones(8, device=self.device)  # normalized to gridspace gain
         ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
         targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None]), 2)  # append anchor indices
 
@@ -116,20 +126,20 @@ class CustomLoss:
 
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape
-            gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
+            gain[3:7] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
 
             # Match targets to anchors
-            t = targets * gain  # shape(3,n,7)
+            t = targets * gain  # shape(3,n,8)
             if nt:
                 # Matches
-                r = t[..., 4:6] / anchors[:, None]  # wh ratio
+                r = t[..., 5:7] / anchors[:, None]  # wh ratio
                 j = torch.max(r, 1 / r).max(2)[0] < self.hyp['anchor_t']  # compare
-                # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+                # j = wh_iou(anchors, t[:, 5:7]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
                 t = t[j]  # filter
 
                 # Offsets
-                gxy = t[:, 2:4]  # grid xy
-                gxi = gain[[2, 3]] - gxy  # inverse
+                gxy = t[:, 3:5]  # grid xy
+                gxi = gain[[3, 4]] - gxy  # inverse
                 j, k = ((gxy % 1 < g) & (gxy > 1)).T
                 l, m = ((gxi % 1 < g) & (gxi > 1)).T
                 j = torch.stack((torch.ones_like(j), j, k, l, m))
@@ -140,8 +150,10 @@ class CustomLoss:
                 offsets = 0
 
             # Define
-            bc, gxy, gwh, a = t.chunk(4, 1)  # (image, class), grid xy, grid wh, anchors
-            a, (b, c) = a.long().view(-1), bc.long().T  # anchors, image, class
+            # bcp, gxy, gwh, a = t.chunk(4, 1)  # (image, class, pitch), grid xy, grid wh, anchors
+            t = t.split([3, 2, 2, 1], dim=1)  # [bcp(3), gxy(2), gwh(2), a(1)]
+            bcp, gxy, gwh, a = t
+            a, (b, c, pitch) = a.long().view(-1), bcp.long().T  # anchors, image, class, pitch
             gij = (gxy - offsets).long()
             gi, gj = gij.T  # grid indices
 
@@ -150,6 +162,7 @@ class CustomLoss:
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             anch.append(anchors[a])  # anchors
             tcls.append(c)  # class
+            tpitch.append(pitch)  # pitch
             # print("b",b)
 
-        return tcls, tbox, indices, anch
+        return tcls, tpitch, tbox, indices, anch

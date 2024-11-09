@@ -5,11 +5,6 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-FILE = Path(__file__).resolve()
-ROOT = FILE.parents[1]  # YOLOv3 root directory
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))  # add ROOT to PATH
-
 from yolov3.models.common import *  # noqa
 from yolov3.models.experimental import *  # noqa
 from yolov3.utils.autoanchor import check_anchor_order
@@ -26,12 +21,12 @@ class Detect(nn.Module):
     dynamic = False  # force grid reconstruction
     export = False  # export mode
 
-    def __init__(self, nc=80, np=136, anchors=(), ch=(), inplace=True):  # detection layer
+    def __init__(self, nc=80, npitch=136, anchors=(), ch=(), inplace=True):  # detection layer
         """Initializes YOLOv3 detection layer with class count, anchors, channels, and operation modes."""
         super().__init__()
         self.nc = nc  # number of classes
-        self.np = np  # number of pitches
-        self.no = nc + np + 5  # number of outputs per anchor (classes + pitches + [x,y,w,h,obj])
+        self.npitch = npitch  # number of pitches
+        self.no = nc + npitch + 5  # number of outputs per anchor (classes + pitches + [x,y,w,h,obj])
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
         self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid
@@ -57,7 +52,7 @@ class Detect(nn.Module):
                     self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
 
                 # Split predictions into components
-                xy, wh, conf_cls_pitch = x[i].sigmoid().split((2, 2, self.nc + self.np + 1), 4)
+                xy, wh, conf_cls_pitch = x[i].sigmoid().split((2, 2, self.nc + self.npitch + 1), 4)
                 xy = (xy * 2 + self.grid[i]) * self.stride[i]  # xy
                 wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
                 y = torch.cat((xy, wh, conf_cls_pitch), 4)  # Combine predictions
@@ -218,12 +213,12 @@ class OMRModel(BaseModel):
 def parse_model(d, ch):  # model_dict, input_channels(3)
     """Parses a YOLOv3 model configuration from a dictionary and constructs the model."""
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
-    anchors, nc, np, gd, gw, act = d["anchors"], d["nc"], d["np"], d["depth_multiple"], d["width_multiple"], d.get("activation")
+    anchors, nc, npitch, gd, gw, act = d["anchors"], d["nc"], d["npitch"], d["depth_multiple"], d["width_multiple"], d.get("activation")
     if act:
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
         LOGGER.info(f"{colorstr('activation:')} {act}")  # print
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
-    no = na * (nc + np + 5)  # number of outputs = anchors * (classes + pitches + 5)
+    no = na * (nc + npitch + 5)  # number of outputs = anchors * (classes + pitches + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args

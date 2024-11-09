@@ -31,10 +31,10 @@ class CustomDataset(Dataset):
         boxes = []
         with open(annotation_dir, 'r') as file:
             for line in file.readlines():
-                class_label, x_center, y_center, width, height = [
+                class_label, pitch_label, x_center, y_center, width, height = [
                     float(x) for x in line.replace('\n', '').split()
                 ]
-                boxes.append([index, class_label, x_center, y_center, width, height])
+                boxes.append([index, class_label, pitch_label, x_center, y_center, width, height])
 
         boxes = torch.tensor(boxes)
 
