@@ -20,6 +20,7 @@ class CustomLoss:
         # Define criteria
         BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
         BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
+        BCEpitch = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['pitch_pw']], device=device))
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
         self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
@@ -27,12 +28,12 @@ class CustomLoss:
         # Focal loss
         g = h['fl_gamma']  # focal loss gamma
         if g > 0:
-            BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
+            BCEcls, BCEobj, BCEpitch = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g), FocalLoss(BCEpitch, g)
 
         m = de_parallel(model).model[-1]  # Detect() module
         self.balance = {3: [4.0, 1.0, 0.4]}.get(m.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
         self.ssi = list(m.stride).index(16) if autobalance else 0  # stride 16 index
-        self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, 1.0, h, autobalance
+        self.BCEcls, self.BCEobj, self.BCEpitch, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, BCEpitch, 1.0, h, autobalance
         self.na = m.na  # number of anchors
         self.nc = m.nc  # number of classes
         self.npitch = m.npitch  # number of pitches
@@ -84,7 +85,7 @@ class CustomLoss:
                 if self.npitch > 1:  # pitch loss
                     tp = torch.full_like(ppitch, self.cn, device=self.device)  # targets
                     tp[range(n), tpitch[i]] = self.cp
-                    lpitch += self.BCEcls(ppitch, tp)  # BCE
+                    lpitch += self.BCEpitch(ppitch, tp)  # BCE
 
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:

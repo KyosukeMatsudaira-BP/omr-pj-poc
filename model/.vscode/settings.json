@@ -1,7 +1,64 @@
 {
     "python.testing.pytestArgs": [
-        "tests"
+      "tests",
+      //"--cov=src",
+      //"--cov-branch",
+      //"--cov-report=xml",
+      //"--cov-report=html",
+      "-v"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
-}
+    "python.testing.pytestEnabled": true,
+    "editor.formatOnSave": true,
+    "python.languageServer": "Pylance",
+    "files.exclude": {
+      "**/.git": true,
+      "**/.svn": true,
+      "**/.hg": true,
+      "**/CVS": true,
+      "**/.DS_Store": true,
+      "**/Thumbs.db": true,
+      "**/.venv": true,
+      "**/.pytest_cache": true,
+      "**/.ruff_cache": true,
+      "**/__pycache__": true
+    },
+    "coverage-gutters.coverageReportFileName": "htmlcov/**/index.html",
+    "coverage-gutters.showLineCoverage": false,
+    "coverage-gutters.showRulerCoverage": false,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    },
+    "python.analysis.diagnosticMode": "workspace",
+    "[terraform]": {
+      "editor.defaultFormatter": "hashicorp.terraform",
+      "editor.formatOnSave": true,
+      "editor.formatOnSaveMode": "file"
+    },
+    "[terraform-vars]": {
+      "editor.defaultFormatter": "hashicorp.terraform",
+      "editor.formatOnSave": true,
+      "editor.formatOnSaveMode": "file"
+    },
+    "ruff.format.args": ["--config=pyproject.toml"],
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.autoImportCompletions": true,
+    "notebook.formatOnSave.enabled": true,
+    "python.analysis.ignore": ["**/*.ipynb"],
+    "[sql]": {
+      "editor.defaultFormatter": "inferrinizzard.prettier-sql-vscode",
+      "editor.formatOnSave": true,
+      "editor.formatOnSaveMode": "file"
+    },
+    "[markdown]": {
+      "editor.defaultFormatter": "yzhang.markdown-all-in-one",
+      "editor.formatOnSave": true,
+      "editor.formatOnSaveMode": "file"
+    },
+    "markdown-pdf.highlightStyle": "a11y-dark.css",
+    "markdown-pdf.styles": ["docs/manual/styles/custom.css"],
+    "markdown-pdf.includeDefaultStyles": false,
+    "markdown.extension.toc.levels": "2..6",
+    "markdown-pdf.mermaidServer": "https://unpkg.com/mermaid@10.4.0/dist/mermaid.min.js"
+  }
