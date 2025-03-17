@@ -201,7 +201,7 @@ def task_for_each_label_json(
 if __name__=="__main__":
     # ディレクトリパスの定義
     base_dir = Path(__file__).parent.parent
-    data_version = "ds2_complete" # フル版ならds2_complete
+    data_version = "ds2_dense" # フル版ならds2_complete
     data_dir = base_dir / "data" / data_version
     results_dir = base_dir / "results"
     seg_dir = data_dir/ "segmentation"
