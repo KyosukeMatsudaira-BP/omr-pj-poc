@@ -6,6 +6,13 @@ from PIL import Image
 import json
 from tqdm import tqdm
 import cv2
+import csv
+import concurrent.futures
+from functools import partial
+import logging
+
+# ログの設定
+logging.basicConfig(level=logging.INFO)
 
 
 def get_files_with_extension(directory: Path, extension: str) -> list[str]:
@@ -133,30 +140,21 @@ def draw_bounding_boxes(image, bounding_boxes):
     return image_
 
 
-if __name__=="__main__":
-    base_dir = Path(__file__).parent.parent
-    dense_data_dir = base_dir / "data" / "ds2_dense" 
-    seg_dir = dense_data_dir/ "segmentation"
-    results_dir = base_dir / "results" / "barline_annotation"
-    save_img_dir = results_dir / "images"
-    results_dir.mkdir(exist_ok=True)
-    save_img_dir.mkdir(exist_ok=True)
 
-    # dense版のアノテーションデータを読み込み
-    train_json_file_path = dense_data_dir / "deepscores_train.json"
-    test_json_file_path = dense_data_dir / "deepscores_test.json"
-    with open(train_json_file_path) as file:
-        deepscores_train_json = json.load(file)
-    with open(test_json_file_path) as file:
-        deepscores_test_json = json.load(file)
-    dense_images_data = deepscores_train_json["images"] + deepscores_test_json["images"]
+def task_for_each_label_json(
+    label_filepath: str,
+    save_results_dir: Path,
+):
+    # ラベルデータの読み込み
+    with open(label_filepath) as file:
+        label_json = json.load(file)
+    images_data = label_json["images"]
 
-    # 元画像のパスを取得
-    images_paths = get_files_with_extension(seg_dir, ".png")
-    # images_paths = images_paths[:10]
+    for v in images_data:
+        img_filename = v["filename"]
+        img_id = v["id"]
+        img_path = seg_dir / img_filename.replace(".png", "_seg.png")
 
-    results = []
-    for img_path in tqdm(images_paths):
         # 画像の読み込み
         img = Image.open(img_path).convert('RGB')
         img_np = np.array(img)
@@ -174,33 +172,64 @@ if __name__=="__main__":
         # 画像idを取得する
         try:
             img_filename = str(img_path.name).replace("_seg", "") # _segの文字列をファイル名から削除
-            # print(img_filename)
-            img_id = get_img_id(dense_images_data, img_filename)
-        except:
+            # img_id = get_img_id(images_data, img_filename)
+        except Exception as e:
+            print(e)
             img_id = "None"
             img_filename = img_path.name
-            print(img_filename)
 
-        # 結果を追加
-        for b_box in bounding_boxes:
-            res = [img_id] + b_box
-            results.append(res)
+        # 結果を保存
+        save_result_filepath = save_results_dir / f"{img_id}.txt"
+        with open(save_result_filepath, mode="w") as f:
+            writer = csv.writer(f)
+            for b_box in bounding_boxes:
+                res = [img_id] + b_box
+                writer.writerow(res)
 
         # 画像の保存
-        img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY) # 白黒に一旦してから
-        img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB) # RGBに変換することで三次元配列を維持
-        img_with_bbox = draw_bounding_boxes(img_np, bounding_boxes) # bboxを描画
-        img_result_filepath = save_img_dir / img_filename
-        cv2.imwrite(img_result_filepath, img_with_bbox)
-    
-    # 結果をテキストファイルに出力
-    result_path = results_dir / "barline_annotation.txt"
-    with open(result_path, 'w') as f:
-        for res in results:
-            # リストの各要素をスペースで区切って1行に書き込む
-            f.write(' '.join(map(str, res)) + '\n')
-    
+        # img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY) # 白黒に一旦してから
+        # img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB) # RGBに変換することで三次元配列を維持
+        # img_with_bbox = draw_bounding_boxes(img_np, bounding_boxes) # bboxを描画
+        # img_result_filepath = save_img_dir / img_filename
+        # cv2.imwrite(img_result_filepath, img_with_bbox)
+
+    return f"{Path(label_filepath).name} has completed."
 
 
 
 
+if __name__=="__main__":
+    # ディレクトリパスの定義
+    base_dir = Path(__file__).parent.parent
+    data_version = "ds2_dense" # フル版ならds2_complete
+    data_dir = base_dir / "data" / data_version
+    results_dir = base_dir / "results"
+    seg_dir = data_dir/ "segmentation"
+    barline_annotation_results_dir = results_dir / "barline_annotation" / data_version
+    save_img_dir = barline_annotation_results_dir / "images"
+    save_results_dir = barline_annotation_results_dir / "results"
+    results_dir.mkdir(exist_ok=True)
+    barline_annotation_results_dir.mkdir(exist_ok=True, parents=True)
+    save_img_dir.mkdir(exist_ok=True)
+    save_results_dir.mkdir(exist_ok=True)
+
+    # 元画像のパスを取得
+    images_paths = get_files_with_extension(seg_dir, ".png")
+
+    # 元データのラベルのファイルパス
+    label_filepaths = [str(file) for file in data_dir.rglob("*.json")]
+    print(label_filepaths)
+
+    # jsonごとに並列実行してデータを作成する
+    partial_task = partial( # partialを使って共通の引数を固定する
+        task_for_each_label_json,
+        save_results_dir=save_results_dir
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
+        # 各タスクをサブミットしてfutureオブジェクトを生成
+        futures = [executor.submit(partial_task, label_filepath) for label_filepath in label_filepaths]
+        
+        # タスクが完了するたびにログを出力
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            logging.info(result)
