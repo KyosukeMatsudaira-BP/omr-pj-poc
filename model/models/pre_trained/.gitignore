@@ -1,2 +1,3 @@
 *
 !.gitignore
+!yolov5s.pt
