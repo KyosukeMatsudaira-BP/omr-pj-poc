@@ -1,3 +1,5 @@
 yolov3
 core
 workspace
+logs
+**/__pycache__/**

@@ -30,6 +30,8 @@ torch = {version = "1.13.1+cu116", source = "torch_cu116"}
 torchvision = {version = "0.14.1+cu116", source = "torch_cu116"}
 torchaudio = {version = "0.13.1", source = "torch_cu116"}
 pytest = "^8.3.3"
+click = "^8.1.8"
+scikit-learn = "^1.6.1"
 
 
 [[tool.poetry.source]]
