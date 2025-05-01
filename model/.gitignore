@@ -1,5 +1,7 @@
 yolov3
 core
-workspace
+workspace/*
 logs
 **/__pycache__/**
+
+!workspace/**.ipynb
