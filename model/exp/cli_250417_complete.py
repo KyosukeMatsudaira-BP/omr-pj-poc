@@ -30,7 +30,7 @@ logger.addHandler(ch)
 
 
 BATCH_SIZE = 8
-EPOCH_NUM = 2
+EPOCH_NUM = 6
 
 
 @click.group()
