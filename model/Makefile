@@ -20,7 +20,7 @@ force-clean-non-images:
 train:
 	@mkdir -p logs
 	@echo "Starting training in background... (log: logs/train.log)"
-	@nohup python exp/cli_250417_complete.py model-train 250417_complete_epoch_6 > logs/250417_complete_epoch_6.log 2>&1 &
+	@nohup python exp/cli_250508_complete.py model-train 250508_complete_weightedCIoU_epoch10 > logs/250508_complete_weightedCIoU_epoch10.log 2>&1 &
 	@echo "Training started. Check logs/train.log for progress."
 
 .PHONY: preprocess

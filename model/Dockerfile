@@ -101,6 +101,8 @@ RUN sudo apt-get autoremove -y \
     && sudo apt-get clean -y \
     && sudo rm -rf /var/lib/apt/lists/*
 
+# Set PYTHONPATH
+ENV PYTHONPATH="/workspace/repo"
 
 WORKDIR /workspace/repo
 

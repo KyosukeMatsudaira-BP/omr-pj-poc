@@ -1,13 +1,20 @@
+import math
+
 import torch
 import torch.nn as nn
-from yolov3.utils.metrics import bbox_iou
-from yolov3.utils.torch_utils import de_parallel
+
 from yolov3.utils.loss import FocalLoss
 
+# from yolov3.utils.metrics import bbox_iou
+from yolov3.utils.torch_utils import de_parallel
 
-def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
+
+def smooth_BCE(
+    eps=0.1,
+):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
     # return positive, negative label smoothing BCE targets
     return 1.0 - 0.5 * eps, 0.5 * eps
+
 
 class CustomLoss:
     sort_obj_iou = False
@@ -18,29 +25,49 @@ class CustomLoss:
         h = model.hyp  # hyperparameters
 
         # Define criteria
-        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
-        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
-        BCEpitch = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['pitch_pw']], device=device))
+        BCEcls = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([h["cls_pw"]], device=device)
+        )
+        BCEobj = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([h["obj_pw"]], device=device)
+        )
+        BCEpitch = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([h["pitch_pw"]], device=device)
+        )
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
-        self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
+        self.cp, self.cn = smooth_BCE(
+            eps=h.get("label_smoothing", 0.0)
+        )  # positive, negative BCE targets
 
         # Focal loss
-        g = h['fl_gamma']  # focal loss gamma
+        g = h["fl_gamma"]  # focal loss gamma
         if g > 0:
-            BCEcls, BCEobj, BCEpitch = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g), FocalLoss(BCEpitch, g)
+            BCEcls, BCEobj, BCEpitch = (
+                FocalLoss(BCEcls, g),
+                FocalLoss(BCEobj, g),
+                FocalLoss(BCEpitch, g),
+            )
 
         m = de_parallel(model).model[-1]  # Detect() module
-        self.balance = {3: [4.0, 1.0, 0.4]}.get(m.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
+        self.balance = {3: [4.0, 1.0, 0.4]}.get(
+            m.nl, [4.0, 1.0, 0.25, 0.06, 0.02]
+        )  # P3-P7
         self.ssi = list(m.stride).index(16) if autobalance else 0  # stride 16 index
-        self.BCEcls, self.BCEobj, self.BCEpitch, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, BCEpitch, 1.0, h, autobalance
+        self.BCEcls, self.BCEobj, self.BCEpitch, self.gr, self.hyp, self.autobalance = (
+            BCEcls,
+            BCEobj,
+            BCEpitch,
+            1.0,
+            h,
+            autobalance,
+        )
         self.na = m.na  # number of anchors
         self.nc = m.nc  # number of classes
         self.npitch = m.npitch  # number of pitches
         self.nl = m.nl  # number of layers
         self.anchors = m.anchors
         self.device = device
-
 
     def __call__(self, p, targets):  # predictions, targets
         lcls = torch.zeros(1, device=self.device)  # class loss
@@ -52,18 +79,24 @@ class CustomLoss:
         # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
             b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
-            tobj = torch.zeros(pi.shape[:4], dtype=pi.dtype, device=self.device)  # target obj
+            tobj = torch.zeros(
+                pi.shape[:4], dtype=pi.dtype, device=self.device
+            )  # target obj
 
             n = b.shape[0]  # number of targets
             if n:
                 # pxy, pwh, _, pcls, ppitch = pi[b, a, gj, gi].tensor_split((2, 4, 5, self.nc + 5), dim=1)  # faster, requires torch 1.8.0
-                pxy, pwh, _, pcls, ppitch = pi[b, a, gj, gi].split((2, 2, 1, self.nc, self.npitch), 1)  # target-subset of predictions
+                pxy, pwh, _, pcls, ppitch = pi[b, a, gj, gi].split(
+                    (2, 2, 1, self.nc, self.npitch), 1
+                )  # target-subset of predictions
 
                 # Regression
                 pxy = pxy.sigmoid() * 2 - 0.5
                 pwh = (pwh.sigmoid() * 2) ** 2 * anchors[i]
                 pbox = torch.cat((pxy, pwh), 1)  # predicted box
-                iou = bbox_iou(pbox, tbox[i], CIoU=True).squeeze()  # iou(prediction, target)
+                iou = bbox_iou(
+                    pbox, tbox[i], weighted_CIoU=True
+                ).squeeze()  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss
 
                 # Objectness
@@ -94,36 +127,49 @@ class CustomLoss:
             obji = self.BCEobj(pi[..., 4], tobj)
             lobj += obji * self.balance[i]  # obj loss
             if self.autobalance:
-                self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
+                self.balance[i] = (
+                    self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
+                )
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-        lbox *= self.hyp['box']
-        lobj *= self.hyp['obj']
-        lcls *= self.hyp['cls']
-        lpitch *= self.hyp['pitch']
+        lbox *= self.hyp["box"]
+        lobj *= self.hyp["obj"]
+        lcls *= self.hyp["cls"]
+        lpitch *= self.hyp["pitch"]
         bs = tobj.shape[0]  # batch size
 
-        return (lbox + lobj + lcls + lpitch) * bs, torch.cat((lbox, lobj, lcls, lpitch)).detach()
+        return (lbox + lobj + lcls + lpitch) * bs, torch.cat(
+            (lbox, lobj, lcls, lpitch)
+        ).detach()
+
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,pitch,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         tcls, tpitch, tbox, indices, anch = [], [], [], [], []
         gain = torch.ones(8, device=self.device)  # normalized to gridspace gain
-        ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
-        targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None]), 2)  # append anchor indices
+        ai = (
+            torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)
+        )  # same as .repeat_interleave(nt)
+        targets = torch.cat(
+            (targets.repeat(na, 1, 1), ai[..., None]), 2
+        )  # append anchor indices
 
         g = 0.5  # bias
-        off = torch.tensor(
-            [
-                [0, 0],
-                [1, 0],
-                [0, 1],
-                [-1, 0],
-                [0, -1],  # j,k,l,m
-                # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
-            ],
-            device=self.device).float() * g  # offsets
+        off = (
+            torch.tensor(
+                [
+                    [0, 0],
+                    [1, 0],
+                    [0, 1],
+                    [-1, 0],
+                    [0, -1],  # j,k,l,m
+                    # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
+                ],
+                device=self.device,
+            ).float()
+            * g
+        )  # offsets
 
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape
@@ -134,7 +180,7 @@ class CustomLoss:
             if nt:
                 # Matches
                 r = t[..., 5:7] / anchors[:, None]  # wh ratio
-                j = torch.max(r, 1 / r).max(2)[0] < self.hyp['anchor_t']  # compare
+                j = torch.max(r, 1 / r).max(2)[0] < self.hyp["anchor_t"]  # compare
                 # j = wh_iou(anchors, t[:, 5:7]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
                 t = t[j]  # filter
 
@@ -154,12 +200,17 @@ class CustomLoss:
             # bcp, gxy, gwh, a = t.chunk(4, 1)  # (image, class, pitch), grid xy, grid wh, anchors
             t = t.split([3, 2, 2, 1], dim=1)  # [bcp(3), gxy(2), gwh(2), a(1)]
             bcp, gxy, gwh, a = t
-            a, (b, c, pitch) = a.long().view(-1), bcp.long().T  # anchors, image, class, pitch
+            a, (b, c, pitch) = (
+                a.long().view(-1),
+                bcp.long().T,
+            )  # anchors, image, class, pitch
             gij = (gxy - offsets).long()
             gi, gj = gij.T  # grid indices
 
             # Append
-            indices.append((b, a, gj.clamp_(0, shape[2] - 1), gi.clamp_(0, shape[3] - 1)))  # image, anchor, grid
+            indices.append(
+                (b, a, gj.clamp_(0, shape[2] - 1), gi.clamp_(0, shape[3] - 1))
+            )  # image, anchor, grid
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             anch.append(anchors[a])  # anchors
             tcls.append(c)  # class
@@ -167,3 +218,72 @@ class CustomLoss:
             # print("b",b)
 
         return tcls, tpitch, tbox, indices, anch
+
+
+def bbox_iou(
+    box1,
+    box2,
+    xywh=True,
+    GIoU=False,
+    DIoU=False,
+    CIoU=False,
+    weighted_CIoU=False,
+    eps=1e-7,
+):
+    """Calculates IoU, GIoU, DIoU, CIoU, or weighted CIoU between two bounding boxes."""
+    # Get the coordinates of bounding boxes
+    if xywh:  # transform from xywh to xyxy
+        (x1, y1, w1, h1), (x2, y2, w2, h2) = box1.chunk(4, -1), box2.chunk(4, -1)
+        w1_, h1_, w2_, h2_ = w1 / 2, h1 / 2, w2 / 2, h2 / 2
+        b1_x1, b1_x2, b1_y1, b1_y2 = x1 - w1_, x1 + w1_, y1 - h1_, y1 + h1_
+        b2_x1, b2_x2, b2_y1, b2_y2 = x2 - w2_, x2 + w2_, y2 - h2_, y2 + h2_
+    else:
+        b1_x1, b1_y1, b1_x2, b1_y2 = box1.chunk(4, -1)
+        b2_x1, b2_y1, b2_x2, b2_y2 = box2.chunk(4, -1)
+        w1, h1 = b1_x2 - b1_x1, (b1_y2 - b1_y1).clamp(eps)
+        w2, h2 = b2_x2 - b2_x1, (b2_y2 - b2_y1).clamp(eps)
+
+    # Intersection area
+    inter = (b1_x2.minimum(b2_x2) - b1_x1.maximum(b2_x1)).clamp(0) * (
+        b1_y2.minimum(b2_y2) - b1_y1.maximum(b2_y1)
+    ).clamp(0)
+
+    # Union Area
+    union = w1 * h1 + w2 * h2 - inter + eps
+
+    # IoU
+    iou = inter / union
+
+    if weighted_CIoU or CIoU or DIoU or GIoU:
+        cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)
+        ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)
+
+        if weighted_CIoU or CIoU or DIoU:
+            c2 = cw**2 + ch**2 + eps
+            rho2 = (
+                (b2_x1 + b2_x2 - b1_x1 - b1_x2) ** 2
+                + (b2_y1 + b2_y2 - b1_y1 - b1_y2) ** 2
+            ) / 4
+
+            if weighted_CIoU or CIoU:
+                v = (4 / math.pi**2) * (torch.atan(w2 / h2) - torch.atan(w1 / h1)).pow(
+                    2
+                )
+                with torch.no_grad():
+                    alpha = v / (v - iou + (1 + eps))
+                ciou = iou - (rho2 / c2 + v * alpha)
+
+                if weighted_CIoU:
+                    # Use area of target (ground truth) box to compute weight
+                    area2 = w2 * h2 + eps
+                    weight = 1.0 / torch.sqrt(area2)  # or use 1 / (area2 ** beta)
+                    return weight * ciou
+                else:
+                    return ciou
+
+            return iou - rho2 / c2  # DIoU
+
+        c_area = cw * ch + eps
+        return iou - (c_area - union) / c_area  # GIoU
+
+    return iou

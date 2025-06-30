@@ -32,6 +32,7 @@ torchaudio = {version = "0.13.1", source = "torch_cu116"}
 pytest = "^8.3.3"
 click = "^8.1.8"
 scikit-learn = "^1.6.1"
+setuptools = "^80.3.1"
 
 
 [[tool.poetry.source]]
